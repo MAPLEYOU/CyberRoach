@@ -1006,6 +1006,18 @@ def _kill_stale_instances():
              if (p.info["name"] or "").lower() == "cyberroach.exe"]
     if not procs:
         return
+    # 排除自己这棵进程树: 启动早期还没有窗口, 不排除会把自己当僵尸杀掉
+    # (单文件 exe: 自己是子进程, 引导器是父进程, 同名 CyberRoach.exe)
+    own = {os.getpid()}
+    try:
+        par = psutil.Process(os.getpid()).parent()
+        if par is not None and (par.info["name"] or "").lower() == "cyberroach.exe":
+            own.add(par.pid)
+    except Exception:
+        pass
+    procs = [p for p in procs if p.pid not in own]
+    if not procs:
+        return
     alive = _visible_roach_pids()
     # 单文件 exe 是父子两进程, 窗口在子进程上; 父进程算活
     live = set(alive)
