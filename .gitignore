@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# 构建/打包产物 (exe 通过 GitHub Releases 分发)
+build/
+dist/
+
+# 日志
+crash.log
+run_log.txt
+*.log
+
+# 用户本地配置 (仓库提供 config.example.json 模板)
+config.json
+
+# 第三方二进制 (LibreHardwareMonitor 已禁用, 不再需要)
+vendor/
+
+# 系统
+.DS_Store
+Thumbs.db
