@@ -915,6 +915,9 @@ class App:
         self.tray.stop()
         self.cursor.restore()
         pygame.quit()
+        # 清理完成后强制结束进程: 某些库的非守护线程会卡住正常的
+        # 解释器退出流程, 导致窗口没了进程还在(任务管理器僵尸)
+        os._exit(0)
 
 
 def _crash_log_path():
