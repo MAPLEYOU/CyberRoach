@@ -357,6 +357,9 @@ class Roach:
             self.scale += dt * (0.004 + env.humidity * 0.010) * boost
             if self.scale >= 0.85:
                 self.nymph = False
+                # 羽化成虫: 必须重设目标体型, 否则成年分支的
+                # min(target_scale, ...) 会把体型打回出生值 0.35
+                self.target_scale = random.uniform(0.9, 1.1)
         else:
             self.scale = min(self.target_scale,
                              self.scale + dt * (0.002 + env.humidity * 0.004)
