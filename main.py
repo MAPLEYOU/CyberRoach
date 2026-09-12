@@ -1011,7 +1011,9 @@ def _kill_stale_instances():
     own = {os.getpid()}
     try:
         par = psutil.Process(os.getpid()).parent()
-        if par is not None and (par.info["name"] or "").lower() == "cyberroach.exe":
+        # 注意: Process 对象没有 .info 属性(那是 process_iter 的),
+        # 必须用 par.name(), 否则这里抛异常导致引导器被误杀
+        if par is not None and par.name().lower() == "cyberroach.exe":
             own.add(par.pid)
     except Exception:
         pass
