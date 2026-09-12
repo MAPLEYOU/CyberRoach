@@ -948,14 +948,19 @@ def _install_crash_hooks():
 
 def _acquire_single_instance():
     """Windows 命名互斥量: 重复启动直接退出, 防止多个全屏透明窗口打架。
-    注意: 必须 use_last_error=True, 否则 GetLastError 会被 ctypes
-    内部调用冲掉, 锁失效。"""
+    注意:
+    1. 必须 use_last_error=True, 否则 GetLastError 会被 ctypes
+       内部调用冲掉, 锁失效。
+    2. 只用 CreateMutexW 一次调用判定, 不做 OpenMutexW 预检——
+       两步之间有竞态窗口, 并行启动可能双开。
+    3. 句柄必须保存在全局变量里, 进程存活期间锁才持续有效
+       (进程退出时内核会自动释放, 无需清理代码)。"""
     import ctypes.wintypes
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    if k32.OpenMutexW(0x1F0001, False, "CyberRoachMutex"):  # 已存在
-        return False
-    k32.CreateMutexW(None, True, "CyberRoachMutex")
-    return ctypes.get_last_error() != 183  # 183=ERROR_ALREADY_EXISTS
+    k32.CreateMutexW.restype = ctypes.wintypes.HANDLE
+    handle = k32.CreateMutexW(None, True, "CyberRoachMutex")
+    globals()["_mutex_handle"] = handle  # 防止句柄被回收
+    return bool(handle) and ctypes.get_last_error() != 183  # 183=ERROR_ALREADY_EXISTS
 
 
 if __name__ == "__main__":
@@ -965,3 +970,17 @@ if __name__ == "__main__":
     elif _acquire_single_instance():
         _install_crash_hooks()
         App().run()
+    else:
+        # 已有小强在跑: 弹窗告知而不是静默退出, 避免用户以为程序坏了
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "小强已经在桌面上跑啦！\n\n"
+                "看屏幕右下角托盘区的小强图标，\n"
+                "右键图标可以退出它，退出后就能重新启动啦。",
+                "CyberRoach 赛博小强",
+                0x00000040,  # MB_ICONINFORMATION
+            )
+        except Exception:
+            pass
