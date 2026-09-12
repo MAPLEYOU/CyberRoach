@@ -958,9 +958,17 @@ def _acquire_single_instance():
     import ctypes.wintypes
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateMutexW.restype = ctypes.wintypes.HANDLE
+    k32.CloseHandle = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.wintypes.HANDLE)(("CloseHandle", k32))
     handle = k32.CreateMutexW(None, True, "CyberRoachMutex")
+    already = ctypes.get_last_error() == 183  # 183=ERROR_ALREADY_EXISTS
+    if already or not handle:
+        # 关键: 抢锁失败必须立刻关掉句柄再弹窗, 否则弹窗进程会一直
+        # 持有互斥量对象, 把"已存在"状态续命, 后续启动永远失败
+        if handle:
+            k32.CloseHandle(handle)
+        return False
     globals()["_mutex_handle"] = handle  # 防止句柄被回收
-    return bool(handle) and ctypes.get_last_error() != 183  # 183=ERROR_ALREADY_EXISTS
+    return True
 
 
 if __name__ == "__main__":
@@ -977,8 +985,10 @@ if __name__ == "__main__":
             ctypes.windll.user32.MessageBoxW(
                 0,
                 "小强已经在桌面上跑啦！\n\n"
-                "看屏幕右下角托盘区的小强图标，\n"
-                "右键图标可以退出它，退出后就能重新启动啦。",
+                "看屏幕右下角托盘区的小强图标（可能藏在 ^ 里），\n"
+                "右键图标可以退出它，退出后就能重新启动啦。\n\n"
+                "如果托盘里也没有小强，请在任务管理器里结束\n"
+                "所有 CyberRoach 进程后再重新启动。",
                 "CyberRoach 赛博小强",
                 0x00000040,  # MB_ICONINFORMATION
             )
