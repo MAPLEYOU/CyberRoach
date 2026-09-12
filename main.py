@@ -828,6 +828,8 @@ class App:
             for evt in pygame.event.get():
                 if evt.type == pygame.QUIT:
                     self.running = False
+                elif evt.type == getattr(pygame, "WINDOWCLOSE", -1):
+                    self.running = False  # WM_CLOSE 等系统关闭消息
                 elif evt.type == pygame.MOUSEBUTTONDOWN and evt.button == 1:
                     if self.slipper_mode:
                         self._swat(*evt.pos)
@@ -912,13 +914,15 @@ class App:
                 except Exception:
                     pass
 
+        # 退出看门狗: 1秒后无论清理是否卡住都强制退场,
+        # 彻底杜绝"窗口没了但进程还在"的任务管理器僵尸
+        threading.Timer(1.0, os._exit, args=(0,)).start()
+        self.cursor.restore()   # 先还原光标, 避免后续步骤卡住时鼠标仍是蟑螂
         self.tray.stop()
-        self.cursor.restore()
         pygame.quit()
         # 清理完成后强制结束进程: 某些库的非守护线程会卡住正常的
         # 解释器退出流程, 导致窗口没了进程还在(任务管理器僵尸)
         os._exit(0)
-
 
 def _crash_log_path():
     # 冻结 exe 时 __file__ 在临时解包目录, 日志放 exe 旁边更好找
@@ -974,26 +978,83 @@ def _acquire_single_instance():
     return True
 
 
+def _visible_roach_pids():
+    """枚举所有拥有可见 pygame 窗口(=活着的桌面小强)的进程 PID"""
+    import ctypes.wintypes
+    u32 = ctypes.windll.user32
+    alive = set()
+    CB = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+    def cb(h, l):
+        pid = ctypes.wintypes.DWORD()
+        u32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        if u32.IsWindowVisible(h):
+            buf = ctypes.create_unicode_buffer(64)
+            u32.GetClassNameW(h, buf, 64)
+            if "pygame" in buf.value.lower():
+                alive.add(pid.value)
+        return True
+    u32.EnumWindows(CB(cb), 0)
+    return alive
+
+
+def _kill_stale_instances():
+    """启动自检: 杀掉历史残留的僵尸进程。
+    判定标准: CyberRoach.exe 进程存在, 但整棵进程树里没有任何
+    可见的桌面小强窗口 => 窗口已死进程未退 => 僵尸, 直接清掉。
+    正在运行的小强(有可见窗口)完全不受影响。"""
+    procs = [p for p in psutil.process_iter(["name"])
+             if (p.info["name"] or "").lower() == "cyberroach.exe"]
+    if not procs:
+        return
+    alive = _visible_roach_pids()
+    # 单文件 exe 是父子两进程, 窗口在子进程上; 父进程算活
+    live = set(alive)
+    for p in procs:
+        try:
+            if p.pid in alive:
+                continue
+            par = p.parent()
+            if par is not None and par.pid in alive:
+                live.add(p.pid)
+            for c in p.children(recursive=True):
+                if c.pid in alive:
+                    live.add(p.pid)
+                    live.add(c.pid)
+        except Exception:
+            pass
+    killed = 0
+    for p in procs:
+        if p.pid not in live:
+            try:
+                p.kill()
+                killed += 1
+            except Exception:
+                pass
+    if killed:
+        time.sleep(1.0)  # 等内核销毁互斥量对象, 避免锁残留
+
+
 if __name__ == "__main__":
     if "--lhm-worker" in sys.argv:  # 冻结 exe 的 LHM 隔离工作模式
         import lhm_worker
         lhm_worker.main()
-    elif _acquire_single_instance():
-        _install_crash_hooks()
-        App().run()
     else:
-        # 已有小强在跑: 弹窗告知而不是静默退出, 避免用户以为程序坏了
-        try:
-            import ctypes
-            ctypes.windll.user32.MessageBoxW(
-                0,
-                "小强已经在桌面上跑啦！\n\n"
-                "看屏幕右下角托盘区的小强图标（可能藏在 ^ 里），\n"
-                "右键图标可以退出它，退出后就能重新启动啦。\n\n"
-                "如果托盘里也没有小强，请在任务管理器里结束\n"
-                "所有 CyberRoach 进程后再重新启动。",
-                "CyberRoach 赛博小强",
-                0x00000040,  # MB_ICONINFORMATION
-            )
-        except Exception:
-            pass
+        _kill_stale_instances()  # 先清历史僵尸再抢锁, 残留进程不再挡路
+        if _acquire_single_instance():
+            _install_crash_hooks()
+            App().run()
+        else:
+            # 真的有一个活着的小强在跑: 弹窗告知而不是静默退出
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    "小强已经在桌面上跑啦！\n\n"
+                    "看屏幕右下角托盘区的小强图标（可能藏在 ^ 里），\n"
+                    "右键图标可以退出它，退出后就能重新启动啦。\n\n"
+                    "如果托盘里也没有小强，重启本程序即可自动清理残留进程。",
+                    "CyberRoach 赛博小强",
+                    0x00000040,  # MB_ICONINFORMATION
+                )
+            except Exception:
+                pass
